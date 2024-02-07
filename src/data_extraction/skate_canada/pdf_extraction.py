@@ -10,13 +10,17 @@ Last Updated: February 07, 2024
 
 import pdfplumber
 import re
+import camelot
+import pandas as pd
 from pathlib import Path
-from tabula import read_pdf
+
 
 # Create path to test importing start order
 # pdf_path = Path("D:/SkateInsight/data/start_order/23SS1STAR6WomenGFP2SO.pdf")
 pdf_path = Path("D:/SkateInsight/data/results/23SS1STAR6WomenGCR.pdf")
 # pdf_path = Path("D:/SkateInsight/data/results/2024SECJuniorWomenCR.pdf")
+# pdf_path = Path("D:/SkateInsight/data/results/2024SECNoviceWomenCR.pdf")
+# pdf_path = Path("D:/SkateInsight/data/results/2024SECNoviceDanceCR.pdf")
 # pdf_path = Path("D:/SkateInsight/data/official/23SS1STAR6WomenGFP2OFF.pdf")
 # pdf_path = Path(
 #    "D:/SkateInsight/data/detail_sheets/23SS1STAR6WomenGFP2DRO.pdf")
@@ -118,13 +122,104 @@ def extract_header_info(text):
         return extract_detail_sheets_header_info(lines, document_type)
 
 
-def extract_tables_with_tabula(pdf_path):
-    # This is to be used with Start Orders, Results, and Officals Lists. NOT for Detail Sheets.
-    tables = read_pdf(pdf_path, pages='all', multiple_tables=True)
+def extract_tables(pdf_path):
+    # This is to be used with Start Orders, Results, and Officials Lists. NOT for Detail Sheets.
+    tables = camelot.read_pdf(str(pdf_path), pages='all', flavor="stream")
     # Further process tables if necessary
-    return tables
+    if len(tables) > 0:
+        # Convert the first table to a DataFrame
+        df = tables[0].df
+
+    # Now, df is a Pandas DataFrame containing the extracted table.
+    return df
+
+
+def clean_results_table(extracted_df):
+    """
+    Cleans the results table DataFrame by dynamically setting headers and filtering rows.
+
+    Parameters:
+    - extracted_df: The DataFrame extracted from the PDF containing the results table.
+
+    Returns:
+    - A cleaned DataFrame with correct headers and filtered valid rows.
+    """
+    # Dynamically set headers based on the 'Rank' keyword and clean the DataFrame
+    df = set_table_header(extracted_df, 'Rank')
+
+    # Remove the footer information leaving only the ranking table
+    df = df[df['Rank'].apply(is_valid_rank)]
+
+    # df = remove_parentheses_from_rankings(df)
+
+    return df
+
+
+def is_valid_rank(rank):
+    if rank.isdigit() or rank == 'WD':  # Check if rank is all digits or 'WD'
+        return True
+    try:
+        # Additional check for numeric ranks that could be floats (in case of decimal ranks, though unlikely)
+        float(rank)
+        return True
+    except ValueError:
+        return False
+
+
+def set_table_header(df, header_keyword):
+    """
+    Dynamically sets DataFrame headers based on a specific keyword in the rows.
+
+    Parameters:
+    - df: The DataFrame to process.
+    - header_keyword: The keyword to search for in the DataFrame to identify the header row.
+
+    Returns:
+    - A cleaned DataFrame with the correct headers set and unnecessary rows removed.
+    """
+
+    header_row_index = None
+    for i, row in df.iterrows():
+        if row.astype(str).str.contains(header_keyword).any():
+            header_row_index = i
+            break
+
+    if header_row_index is not None:
+        # Set the DataFrame headers to the identified header row
+        df.columns = df.iloc[header_row_index]
+        # Drop all rows up to and including the header row
+        df = df.drop(index=range(header_row_index + 1))
+
+        # After setting headers, you might want to reset the index
+        df.reset_index(drop=True, inplace=True)
+
+    return df
+
+
+def remove_parentheses_from_rankings(df):
+    """
+    Removes parentheses from ranking columns in the DataFrame and converts to numeric format.
+
+    Parameters:
+    - df: DataFrame containing the competition results with ranking columns in parentheses.
+
+    Returns:
+    - DataFrame with updated rankings without parentheses.
+    """
+    for col in df.columns:
+        print(type(df[col]))
+        # Ensure we are operating on a Series (column) and then check if any value matches the pattern
+        if df[col].dtype == 'object' and df[col].str.contains("^\(\d+\)$", regex=True).any():
+            # Remove parentheses and convert to float
+            df[col] = df[col].str.extract("\((\d+)\)")[0].astype(float)
+    return df
 
 
 print((extract_all_text(pdf_path)))
 print(extract_header_info(extract_all_text(pdf_path)))
-print(extract_tables_with_tabula(pdf_path))
+results_df = (clean_results_table(extract_tables(pdf_path)))
+
+print(results_df)
+print(results_df.shape)
+print(results_df.head())  # Shows the first few rows of the DataFrame
+print(results_df.dtypes)
